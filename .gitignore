@@ -1,0 +1,99 @@
+# Repo
+Baileys
+# compiled output
+/dist
+/node_modules
+
+/Docker/.env
+
+# Logs
+logs/**.json
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+/docker-compose-data
+/docker-data
+
+# Package
+/yarn.lock
+/pnpm-lock.yaml
+
+# IDEs
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.nova/*
+.idea/*
+
+# Project related
+/instances/*
+!/instances/.gitkeep
+/test/
+/src/env.yml
+/store
+*.env
+
+/temp/*
+
+.DS_Store
+*.DS_Store
+.tool-versions
+
+/prisma/migrations/*
+
+# =============================================
+# TAMBAHAN: File sensitif Masjid Miftahul Jannah
+# =============================================
+
+# Environment variables (berisi API key, DB password, URL)
+.env
+*.env
+.env.*
+!.env.example
+!env.example
+
+# Instance data (berisi sesi WhatsApp yang sudah login)
+/instances/*
+!/instances/.gitkeep
+
+# Script custom lokal (berisi path & konfigurasi spesifik laptop)
+create-instance-4.ps1
+fix-instance-4.ps1
+set-webhook-4.ps1
+set-webhook-pemuliaanjenazah.ps1
+set_webhook_asisten.ps1
+fetch_instances.ps1
+
+# Tunnel scripts (berisi info server internal)
+serveo_tunnel.bat
+serveo_tunnel.js
+
+# Startup script referensi lokal
+start-evolution.bat
+
+# Build output
+/dist
+
+# Node modules
+/node_modules
+
+# Grafana / Prometheus config (berisi credential)
+grafana-dashboard.json.example
+prometheus.yml.example
+
+# Manager & Evolution Manager (subproject besar, repo terpisah)
+/manager
+/evolution-manager-v2
+
+# macOS
+.DS_Store
+*.DS_Store
+
+# SKILL.md (internal, tidak untuk publik)
+SKILL.md
