@@ -25,6 +25,7 @@ enum DeviceMessage {
   web
   unknown
   desktop
+  newsletter
 }
 
 enum SessionStatus {

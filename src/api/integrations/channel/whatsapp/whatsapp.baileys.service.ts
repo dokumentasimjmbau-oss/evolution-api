@@ -1,6 +1,13 @@
 import { getCollectionsDto } from '@api/dto/business.dto';
 import { OfferCallDto } from '@api/dto/call.dto';
 import {
+  CreateNewsletterDto,
+  FetchNewsletterMessagesDto,
+  FindNewsletterMetadataDto,
+  NewsletterJidDto,
+  ReactNewsletterMessageDto,
+} from '@api/dto/newsletter.dto';
+import {
   ArchiveChatDto,
   BlockUserDto,
   DeleteMessage,
@@ -661,11 +668,14 @@ export class BaileysStartupService extends ChannelStartupService {
           return false;
         }
 
+        if (isJidNewsletter(jid)) {
+          return false;
+        }
+
         const isGroupJid = this.localSettings.groupsIgnore && isJidGroup(jid);
         const isBroadcast = !this.localSettings.readStatus && isJidBroadcast(jid);
-        const isNewsletter = isJidNewsletter(jid);
 
-        return isGroupJid || isBroadcast || isNewsletter;
+        return isGroupJid || isBroadcast;
       },
       syncFullHistory: this.localSettings.syncFullHistory,
       shouldSyncHistoryMessage: (msg: proto.Message.IHistorySyncNotification) => {
@@ -1355,6 +1365,43 @@ export class BaileysStartupService extends ChannelStartupService {
           if (this.configService.get<Database>('DATABASE').SAVE_DATA.NEW_MESSAGE) {
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
             const { pollUpdates, ...messageData } = messageRaw;
+
+            // Newsletter messages: use upsert to prevent duplicates and set source='newsletter'
+            if (received.key.remoteJid?.endsWith('@newsletter')) {
+              try {
+                const newsletterData = {
+                  ...messageData,
+                  source: 'newsletter' as const,
+                  status: 'SERVER_ACK',
+                };
+                // Find existing message by key.id and remoteJid to prevent duplicates
+                const existingMsg = await this.prismaRepository.message.findFirst({
+                  where: {
+                    instanceId: this.instanceId,
+                    key: {
+                      path: ['id'],
+                      equals: received.key.id,
+                    },
+                  },
+                });
+                if (existingMsg) {
+                  await this.prismaRepository.message.update({
+                    where: { id: existingMsg.id },
+                    data: newsletterData,
+                  });
+                } else {
+                  await this.prismaRepository.message.create({ data: newsletterData });
+                }
+                this.sendDataWebhook(Events.NEWSLETTER_MESSAGE, {
+                  ...messageData,
+                  source: 'newsletter',
+                });
+              } catch (dbError) {
+                this.logger.error(`Failed to save newsletter message: ${dbError?.message}`);
+              }
+              continue;
+            }
+
             const msg = await this.prismaRepository.message.create({ data: messageData });
 
             const { remoteJid } = received.key;
@@ -1991,6 +2038,25 @@ export class BaileysStartupService extends ChannelStartupService {
             if (events['contacts.update']) {
               const payload = events['contacts.update'];
               this.contactHandle['contacts.update'](payload);
+            }
+
+            if (events['newsletter']) {
+              const payload = events['newsletter'];
+              if (Array.isArray(payload)) {
+                for (const update of payload) {
+                  try {
+                    this.sendDataWebhook(Events.NEWSLETTER_UPDATE, {
+                      id: update.id,
+                      name: update.name,
+                      description: update.description,
+                      subscriberCount: update.subscriberCount,
+                      pictureUrl: update.pictureUrl,
+                    });
+                  } catch (error) {
+                    this.logger.error(`Failed to send newsletter update webhook: ${error?.message}`);
+                  }
+                }
+              }
             }
 
             if (events[Events.LABELS_ASSOCIATION]) {
@@ -5142,5 +5208,127 @@ export class BaileysStartupService extends ChannelStartupService {
         records: formattedMessages,
       },
     };
+  }
+
+  public async findNewsletterMetadata(query: FindNewsletterMetadataDto) {
+    try {
+      if (query.newsletterJid) {
+        if (!query.newsletterJid.endsWith('@newsletter')) {
+          throw new BadRequestException('newsletterJid harus berformat <id>@newsletter');
+        }
+        const result = await this.client.newsletterMetadata('jid', query.newsletterJid);
+        return result;
+      } else if (query.inviteCode) {
+        const result = await this.client.newsletterMetadata('invite', query.inviteCode);
+        return result;
+      } else {
+        throw new BadRequestException('newsletterJid atau inviteCode harus diisi');
+      }
+    } catch (error) {
+      if (error instanceof BadRequestException || error instanceof NotFoundException) throw error;
+      this.logger.error(error);
+      if (error?.output?.statusCode === 404) {
+        throw new NotFoundException('Newsletter tidak ditemukan');
+      }
+      throw new InternalServerErrorException(error?.toString());
+    }
+  }
+
+  public async followNewsletter(data: NewsletterJidDto) {
+    if (!data.newsletterJid?.endsWith('@newsletter')) {
+      throw new BadRequestException('newsletterJid harus berformat <id>@newsletter');
+    }
+    try {
+      await this.client.newsletterFollow(data.newsletterJid);
+      return { followed: true, jid: data.newsletterJid };
+    } catch (error) {
+      this.logger.error(error);
+      throw new InternalServerErrorException(error?.toString());
+    }
+  }
+
+  public async unfollowNewsletter(data: NewsletterJidDto) {
+    if (!data.newsletterJid?.endsWith('@newsletter')) {
+      throw new BadRequestException('newsletterJid harus berformat <id>@newsletter');
+    }
+    try {
+      await this.client.newsletterUnfollow(data.newsletterJid);
+      return { followed: false, jid: data.newsletterJid };
+    } catch (error) {
+      this.logger.error(error);
+      throw new InternalServerErrorException(error?.toString());
+    }
+  }
+
+  public async subscribeNewsletterUpdates(data: NewsletterJidDto) {
+    if (!data.newsletterJid?.endsWith('@newsletter')) {
+      throw new BadRequestException('newsletterJid harus berformat <id>@newsletter');
+    }
+    try {
+      await this.client.subscribeNewsletterUpdates(data.newsletterJid);
+      return { subscribed: true, jid: data.newsletterJid };
+    } catch (error) {
+      this.logger.error(error);
+      throw new InternalServerErrorException(error?.toString());
+    }
+  }
+
+  public async fetchNewsletterMessages(query: FetchNewsletterMessagesDto) {
+    if (!query.newsletterJid?.endsWith('@newsletter')) {
+      throw new BadRequestException('newsletterJid harus berformat <id>@newsletter');
+    }
+    const count = query.count ?? 20;
+    if (count < 1) throw new BadRequestException('count minimal 1');
+    if (count > 100) throw new BadRequestException('count tidak boleh melebihi 100');
+    try {
+      const result = await this.client.newsletterFetchMessages(
+        query.newsletterJid,
+        count,
+        query.since ?? 0,
+        query.after ? Number(query.after) : 0,
+      );
+      return result;
+    } catch (error) {
+      this.logger.error(error);
+      if (error?.output?.statusCode === 404) {
+        throw new NotFoundException('Newsletter tidak ditemukan');
+      }
+      throw new InternalServerErrorException(error?.toString());
+    }
+  }
+
+  public async createNewsletter(data: CreateNewsletterDto) {
+    if (!data.name || data.name.trim().length === 0) {
+      throw new BadRequestException('name wajib diisi');
+    }
+    if (data.description && data.description.length > 512) {
+      throw new BadRequestException('description tidak boleh melebihi 512 karakter');
+    }
+    try {
+      const result = await this.client.newsletterCreate(data.name, data.description);
+      return result;
+    } catch (error) {
+      this.logger.error(error);
+      throw new InternalServerErrorException(error?.toString());
+    }
+  }
+
+  public async reactToNewsletterMessage(data: ReactNewsletterMessageDto) {
+    if (!data.newsletterJid?.endsWith('@newsletter')) {
+      throw new BadRequestException('newsletterJid harus berformat <id>@newsletter');
+    }
+    if (!data.serverId) {
+      throw new BadRequestException('serverId wajib diisi');
+    }
+    try {
+      await this.client.newsletterReactMessage(data.newsletterJid, data.serverId, data.reaction || undefined);
+      return { reacted: true, jid: data.newsletterJid, serverId: data.serverId, reaction: data.reaction };
+    } catch (error) {
+      this.logger.error(error);
+      if (error?.output?.statusCode === 404) {
+        throw new NotFoundException('Server_ID tidak ditemukan dalam newsletter tersebut');
+      }
+      throw new InternalServerErrorException(error?.toString());
+    }
   }
 }

@@ -97,3 +97,6 @@ prometheus.yml.example
 
 # SKILL.md (internal, tidak untuk publik)
 SKILL.md
+
+# Kiro IDE files (internal, tidak untuk publik)
+.kiro/
