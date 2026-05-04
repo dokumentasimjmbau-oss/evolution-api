@@ -5287,7 +5287,21 @@ export class BaileysStartupService extends ChannelStartupService {
         query.since ?? 0,
         query.after ? Number(query.after) : 0,
       );
-      return result;
+      // Parse raw XML node from Baileys into array of messages
+      const { getBinaryNodeChildren } = await import('baileys');
+      const messageNodes = getBinaryNodeChildren(result, 'message');
+      const messages = messageNodes.map((node: any) => {
+        const msgNode = node?.content?.[0];
+        return {
+          server_id: node?.attrs?.server_id,
+          timestamp: node?.attrs?.t,
+          views: node?.attrs?.views_count,
+          type: msgNode?.tag,
+          content: msgNode?.content,
+          attrs: msgNode?.attrs,
+        };
+      });
+      return messages;
     } catch (error) {
       this.logger.error(error);
       if (error?.output?.statusCode === 404) {
