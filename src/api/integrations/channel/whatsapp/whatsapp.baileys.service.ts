@@ -5281,32 +5281,61 @@ export class BaileysStartupService extends ChannelStartupService {
     if (count < 1) throw new BadRequestException('count minimal 1');
     if (count > 100) throw new BadRequestException('count tidak boleh melebihi 100');
     try {
-      const result = await this.client.newsletterFetchMessages(
-        query.newsletterJid,
-        count,
-        query.since ?? 0,
-        query.after ? Number(query.after) : 0,
-      );
-      // Parse raw XML node from Baileys into array of messages
-      const { getBinaryNodeChildren } = await import('baileys');
-      const messageNodes = getBinaryNodeChildren(result, 'message');
-      const messages = messageNodes.map((node: any) => {
-        const msgNode = node?.content?.[0];
+      // Fetch from database (reliable) instead of Baileys API (unreliable/timeout)
+      const where: any = {
+        instanceId: this.instanceId,
+        key: { path: ['remoteJid'], equals: query.newsletterJid },
+      };
+
+      // Filter by timestamp if 'since' provided
+      if (query.since && query.since > 0) {
+        where.messageTimestamp = { gte: query.since };
+      }
+
+      // Filter by server_id if 'after' provided (pagination)
+      if (query.after) {
+        where.AND = [{ key: { path: ['server_id'], gt: query.after } }];
+      }
+
+      const messages = await this.prismaRepository.message.findMany({
+        where,
+        orderBy: { messageTimestamp: 'desc' },
+        take: count,
+        select: {
+          id: true,
+          key: true,
+          pushName: true,
+          messageType: true,
+          message: true,
+          messageTimestamp: true,
+          source: true,
+          contextInfo: true,
+        },
+      });
+
+      return messages.map((msg) => {
+        const key = msg.key as any;
+        const msgContent = msg.message as any;
+        const text =
+          msgContent?.conversation ||
+          msgContent?.extendedTextMessage?.text ||
+          msgContent?.imageMessage?.caption ||
+          msgContent?.videoMessage?.caption ||
+          null;
+
         return {
-          server_id: node?.attrs?.server_id,
-          timestamp: node?.attrs?.t,
-          views: node?.attrs?.views_count,
-          type: msgNode?.tag,
-          content: msgNode?.content,
-          attrs: msgNode?.attrs,
+          server_id: key?.server_id || null,
+          message_id: key?.id,
+          from_me: key?.fromMe ?? false,
+          timestamp: msg.messageTimestamp,
+          type: msg.messageType,
+          text,
+          source: msg.source,
+          raw_message: msgContent,
         };
       });
-      return messages;
     } catch (error) {
       this.logger.error(error);
-      if (error?.output?.statusCode === 404) {
-        throw new NotFoundException('Newsletter tidak ditemukan');
-      }
       throw new InternalServerErrorException(error?.toString());
     }
   }
